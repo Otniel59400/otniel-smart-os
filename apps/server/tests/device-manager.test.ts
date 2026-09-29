@@ -10,6 +10,13 @@ import {
   UnsupportedCommandError
 } from "../src/modules/devices/domain/errors.js";
 import { MockDriver } from "../src/modules/devices/infrastructure/mock-driver.js";
+import { EventBus } from "../src/modules/events/application/event-bus.js";
+import {
+  DeviceEventType,
+  type DeviceRegisteredPayload,
+  type DeviceRemovedPayload,
+  type DeviceStateChangedPayload
+} from "../src/modules/events/domain/device-events.js";
 import { createStubDriver } from "./helpers.js";
 
 const device = {
@@ -22,11 +29,11 @@ const device = {
   createdAt: new Date().toISOString()
 };
 
-function createManager() {
+function createManager(eventBus?: EventBus) {
   const registry = new DriverRegistry();
   registry.register(new MockDriver());
 
-  const manager = new DeviceManager(registry);
+  const manager = new DeviceManager(registry, eventBus);
 
   return { manager, registry };
 }
@@ -83,9 +90,9 @@ describe("DeviceManager", () => {
     const { manager } = createManager();
 
     await manager.initialize();
-    manager.registerDevice(device);
+    await manager.registerDevice(device);
 
-    expect(() => manager.registerDevice(device)).toThrow(
+    await expect(manager.registerDevice(device)).rejects.toBeInstanceOf(
       DeviceAlreadyRegisteredError
     );
   });
@@ -95,13 +102,13 @@ describe("DeviceManager", () => {
 
     await manager.initialize();
 
-    expect(() =>
+    await expect(
       manager.registerDevice({
         ...device,
         id: "orphan",
         driverId: "missing-driver"
       })
-    ).toThrow(DriverNotFoundError);
+    ).rejects.toBeInstanceOf(DriverNotFoundError);
   });
 
   it("rejects an incompatible driver", async () => {
@@ -112,12 +119,12 @@ describe("DeviceManager", () => {
 
     await manager.initialize();
 
-    expect(() =>
+    await expect(
       manager.registerDevice({
         ...device,
         driverId: "reject"
       })
-    ).toThrow(DriverIncompatibleError);
+    ).rejects.toBeInstanceOf(DriverIncompatibleError);
   });
 
   it("rejects an unsupported command", async () => {
@@ -170,5 +177,130 @@ describe("DeviceManager", () => {
     const state = await manager.getDeviceState("test-light");
 
     expect(state.power).toBe(false);
+  });
+
+  it("publishes device.registered after a successful registration", async () => {
+    const eventBus = new EventBus();
+    const { manager } = createManager(eventBus);
+    const received: DeviceRegisteredPayload[] = [];
+
+    eventBus.subscribe<DeviceRegisteredPayload>(
+      DeviceEventType.Registered,
+      (event) => {
+        received.push(event.payload);
+      }
+    );
+
+    await manager.initialize();
+    await manager.registerDevice(device);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.device).toEqual(device);
+  });
+
+  it("publishes device.state.changed after a successful command", async () => {
+    const eventBus = new EventBus();
+    const { manager } = createManager(eventBus);
+    const received: DeviceStateChangedPayload[] = [];
+
+    eventBus.subscribe<DeviceStateChangedPayload>(
+      DeviceEventType.StateChanged,
+      (event) => {
+        received.push(event.payload);
+      }
+    );
+
+    await manager.initialize();
+    await manager.registerDevice(device);
+
+    const state = await manager.executeCommand("test-light", {
+      name: "set_power",
+      parameters: {
+        power: true
+      }
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      deviceId: "test-light",
+      state,
+      device
+    });
+  });
+
+  it("publishes device.removed after a successful removal", async () => {
+    const eventBus = new EventBus();
+    const { manager } = createManager(eventBus);
+    const received: DeviceRemovedPayload[] = [];
+
+    eventBus.subscribe<DeviceRemovedPayload>(
+      DeviceEventType.Removed,
+      (event) => {
+        received.push(event.payload);
+      }
+    );
+
+    await manager.initialize();
+    await manager.registerDevice(device);
+    await manager.removeDevice("test-light");
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({
+      deviceId: "test-light",
+      device
+    });
+  });
+
+  it("does not publish success events when an operation fails", async () => {
+    const eventBus = new EventBus();
+    const { manager } = createManager(eventBus);
+    const registered: DeviceRegisteredPayload[] = [];
+    const stateChanged: DeviceStateChangedPayload[] = [];
+    const removed: DeviceRemovedPayload[] = [];
+
+    eventBus.subscribe<DeviceRegisteredPayload>(
+      DeviceEventType.Registered,
+      (event) => {
+        registered.push(event.payload);
+      }
+    );
+    eventBus.subscribe<DeviceStateChangedPayload>(
+      DeviceEventType.StateChanged,
+      (event) => {
+        stateChanged.push(event.payload);
+      }
+    );
+    eventBus.subscribe<DeviceRemovedPayload>(
+      DeviceEventType.Removed,
+      (event) => {
+        removed.push(event.payload);
+      }
+    );
+
+    await manager.initialize();
+
+    await expect(
+      manager.registerDevice({
+        ...device,
+        driverId: "missing-driver"
+      })
+    ).rejects.toBeInstanceOf(DriverNotFoundError);
+
+    await manager.registerDevice(device);
+
+    await expect(
+      manager.executeCommand("test-light", {
+        name: "blink"
+      })
+    ).rejects.toBeInstanceOf(UnsupportedCommandError);
+
+    await expect(manager.removeDevice("unknown-device")).rejects.toBeInstanceOf(
+      DeviceNotFoundError
+    );
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0]?.device.id).toBe("test-light");
+    expect(stateChanged).toHaveLength(0);
+    expect(removed).toHaveLength(0);
   });
 });

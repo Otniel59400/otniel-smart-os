@@ -16,7 +16,7 @@ const testDevice = {
 async function createApp() {
   const context = await buildApp();
 
-  context.deviceManager.registerDevice({
+  await context.deviceManager.registerDevice({
     ...testDevice,
     createdAt: new Date().toISOString()
   });
@@ -210,7 +210,7 @@ describe("Device HTTP routes", () => {
   it("returns 400 when the device lacks the required capability", async () => {
     const { app, deviceManager } = await buildApp();
 
-    deviceManager.registerDevice({
+    await deviceManager.registerDevice({
       ...testDevice,
       id: "sensor-1",
       type: "sensor",

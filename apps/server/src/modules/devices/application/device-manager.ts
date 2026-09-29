@@ -12,13 +12,21 @@ import {
   InsufficientCapabilityError,
   UnsupportedCommandError
 } from "../domain/errors.js";
+import type { EventBus } from "../../events/application/event-bus.js";
+import {
+  DeviceEventType,
+  type DeviceRegisteredPayload,
+  type DeviceRemovedPayload,
+  type DeviceStateChangedPayload
+} from "../../events/domain/device-events.js";
 import { DriverRegistry } from "./driver-registry.js";
 
 export class DeviceManager {
   private readonly devices = new Map<string, Device>();
 
   constructor(
-    private readonly driverRegistry: DriverRegistry
+    private readonly driverRegistry: DriverRegistry,
+    private readonly eventBus?: EventBus
   ) {}
 
   async initialize(): Promise<void> {
@@ -27,7 +35,7 @@ export class DeviceManager {
     }
   }
 
-  registerDevice(device: Device): void {
+  async registerDevice(device: Device): Promise<void> {
     if (this.devices.has(device.id)) {
       throw new DeviceAlreadyRegisteredError(device.id);
     }
@@ -39,6 +47,10 @@ export class DeviceManager {
     }
 
     this.devices.set(device.id, device);
+
+    await this.emit<DeviceRegisteredPayload>(DeviceEventType.Registered, {
+      device
+    });
   }
 
   getDevice(deviceId: string): Device {
@@ -61,6 +73,11 @@ export class DeviceManager {
 
     await driver.releaseDevice(deviceId);
     this.devices.delete(deviceId);
+
+    await this.emit<DeviceRemovedPayload>(DeviceEventType.Removed, {
+      deviceId,
+      device
+    });
   }
 
   async getDeviceState(deviceId: string): Promise<DeviceState> {
@@ -88,13 +105,31 @@ export class DeviceManager {
     }
 
     const driver = this.driverRegistry.get(device.driverId);
+    const state = await driver.executeCommand(device, command);
 
-    return driver.executeCommand(device, command);
+    await this.emit<DeviceStateChangedPayload>(DeviceEventType.StateChanged, {
+      deviceId,
+      state,
+      device
+    });
+
+    return state;
   }
 
   async dispose(): Promise<void> {
     for (const driver of this.driverRegistry.list()) {
       await driver.dispose();
     }
+  }
+
+  private async emit<TPayload>(
+    type: string,
+    payload: TPayload
+  ): Promise<void> {
+    if (!this.eventBus) {
+      return;
+    }
+
+    await this.eventBus.publish(type, payload);
   }
 }

@@ -74,7 +74,7 @@ export function registerDeviceRoutes(
       createdAt: new Date().toISOString()
     };
 
-    deviceManager.registerDevice(device);
+    await deviceManager.registerDevice(device);
 
     return reply.status(201).send(device);
   });

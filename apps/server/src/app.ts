@@ -6,6 +6,7 @@ import { DriverRegistry } from "./modules/devices/application/driver-registry.js
 import { registerDeviceRoutes } from "./modules/devices/http/device-routes.js";
 import { registerHttpErrorHandler } from "./modules/devices/http/http-errors.js";
 import { MockDriver } from "./modules/devices/infrastructure/mock-driver.js";
+import { EventBus } from "./modules/events/application/event-bus.js";
 
 export const APP_VERSION = "0.1.0";
 
@@ -52,6 +53,7 @@ export interface DeviceRuntime {
   driverRegistry: DriverRegistry;
   deviceManager: DeviceManager;
   mockDriver: MockDriver;
+  eventBus: EventBus;
 }
 
 export interface BuildAppOptions {
@@ -65,6 +67,7 @@ export interface AppContext {
   app: FastifyInstance;
   deviceManager: DeviceManager;
   driverRegistry: DriverRegistry;
+  eventBus: EventBus;
 }
 
 export function createDeviceRuntime(
@@ -79,18 +82,20 @@ export function createDeviceRuntime(
     driverRegistry.register(driver);
   }
 
-  const deviceManager = new DeviceManager(driverRegistry);
+  const eventBus = new EventBus();
+  const deviceManager = new DeviceManager(driverRegistry, eventBus);
 
   return {
     driverRegistry,
     deviceManager,
-    mockDriver
+    mockDriver,
+    eventBus
   };
 }
 
-export function seedDemoDevices(deviceManager: DeviceManager): void {
+export async function seedDemoDevices(deviceManager: DeviceManager): Promise<void> {
   for (const device of demoDevices) {
-    deviceManager.registerDevice(device);
+    await deviceManager.registerDevice(device);
   }
 }
 
@@ -120,12 +125,13 @@ export async function buildApp(
   await runtime.deviceManager.initialize();
 
   if (options.seedDemoDevices) {
-    seedDemoDevices(runtime.deviceManager);
+    await seedDemoDevices(runtime.deviceManager);
   }
 
   return {
     app,
     deviceManager: runtime.deviceManager,
-    driverRegistry: runtime.driverRegistry
+    driverRegistry: runtime.driverRegistry,
+    eventBus: runtime.eventBus
   };
 }
