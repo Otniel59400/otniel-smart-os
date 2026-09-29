@@ -16,5 +16,7 @@ export interface DeviceDriver {
     command: DeviceCommand
   ): Promise<DeviceState>;
 
+  releaseDevice(deviceId: string): Promise<void>;
+
   dispose(): Promise<void>;
 }

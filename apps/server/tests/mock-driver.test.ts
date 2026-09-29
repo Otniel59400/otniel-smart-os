@@ -1,5 +1,6 @@
 ﻿import { describe, expect, it } from "vitest";
 import { MockDriver } from "../src/modules/devices/infrastructure/mock-driver.js";
+import { InvalidCommandError } from "../src/modules/devices/domain/errors.js";
 
 const device = {
   id: "test-light",
@@ -68,6 +69,25 @@ describe("MockDriver", () => {
           power: "yes"
         }
       })
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(InvalidCommandError);
+  });
+
+  it("does not restore previous state after releaseDevice", async () => {
+    const driver = new MockDriver();
+
+    await driver.initialize();
+
+    await driver.executeCommand(device, {
+      name: "set_power",
+      parameters: {
+        power: true
+      }
+    });
+
+    await driver.releaseDevice(device.id);
+
+    const state = await driver.getState(device);
+
+    expect(state.power).toBe(false);
   });
 });

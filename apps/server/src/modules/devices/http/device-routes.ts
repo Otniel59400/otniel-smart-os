@@ -25,28 +25,16 @@ export function registerDeviceRoutes(
     return deviceManager.listDevices();
   });
 
-  app.get("/api/devices/:id", async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string };
+  app.get("/api/devices/:id", async (request) => {
+    const { id } = request.params as { id: string };
 
-      return deviceManager.getDevice(id);
-    } catch (error) {
-      return reply.status(404).send({
-        error: error instanceof Error ? error.message : "Device not found"
-      });
-    }
+    return deviceManager.getDevice(id);
   });
 
-  app.get("/api/devices/:id/state", async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string };
+  app.get("/api/devices/:id/state", async (request) => {
+    const { id } = request.params as { id: string };
 
-      return await deviceManager.getDeviceState(id);
-    } catch (error) {
-      return reply.status(404).send({
-        error: error instanceof Error ? error.message : "Device not found"
-      });
-    }
+    return deviceManager.getDeviceState(id);
   });
 
   app.post("/api/devices/:id/commands", async (request, reply) => {
@@ -57,22 +45,17 @@ export function registerDeviceRoutes(
     if (!parsed.success) {
       return reply.status(400).send({
         error: "Invalid command",
+        code: "INVALID_INPUT",
         details: parsed.error.issues
       });
     }
 
-    try {
-      const state = await deviceManager.executeCommand(id, parsed.data);
+    const state = await deviceManager.executeCommand(id, parsed.data);
 
-      return {
-        deviceId: id,
-        state
-      };
-    } catch (error) {
-      return reply.status(400).send({
-        error: error instanceof Error ? error.message : "Command failed"
-      });
-    }
+    return {
+      deviceId: id,
+      state
+    };
   });
 
   app.post("/api/devices", async (request, reply) => {
@@ -81,23 +64,18 @@ export function registerDeviceRoutes(
     if (!parsed.success) {
       return reply.status(400).send({
         error: "Invalid device",
+        code: "INVALID_INPUT",
         details: parsed.error.issues
       });
     }
 
-    try {
-      const device = {
-        ...parsed.data,
-        createdAt: new Date().toISOString()
-      };
+    const device = {
+      ...parsed.data,
+      createdAt: new Date().toISOString()
+    };
 
-      deviceManager.registerDevice(device);
+    deviceManager.registerDevice(device);
 
-      return reply.status(201).send(device);
-    } catch (error) {
-      return reply.status(400).send({
-        error: error instanceof Error ? error.message : "Device registration failed"
-      });
-    }
+    return reply.status(201).send(device);
   });
 }

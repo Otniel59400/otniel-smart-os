@@ -2,6 +2,10 @@
 import type { DeviceCommand } from "../domain/device-command.js";
 import type { DeviceDriver } from "../domain/device-driver.js";
 import type { DeviceState } from "../domain/device-state.js";
+import {
+  InvalidCommandError,
+  UnsupportedCommandError
+} from "../domain/errors.js";
 
 export class MockDriver implements DeviceDriver {
   readonly id = "mock";
@@ -33,7 +37,9 @@ export class MockDriver implements DeviceDriver {
         const power = command.parameters?.power;
 
         if (typeof power !== "boolean") {
-          throw new Error('Command "set_power" requires a boolean "power" parameter');
+          throw new InvalidCommandError(
+            'Command "set_power" requires a boolean "power" parameter'
+          );
         }
 
         const newState: DeviceState = {
@@ -58,8 +64,12 @@ export class MockDriver implements DeviceDriver {
       }
 
       default:
-        throw new Error(`Unsupported command "${command.name}"`);
+        throw new UnsupportedCommandError(command.name);
     }
+  }
+
+  async releaseDevice(deviceId: string): Promise<void> {
+    this.states.delete(deviceId);
   }
 
   async dispose(): Promise<void> {

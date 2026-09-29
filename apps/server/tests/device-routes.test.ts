@@ -1,41 +1,32 @@
 ﻿import { describe, expect, it } from "vitest";
-import Fastify from "fastify";
-import { DriverRegistry } from "../src/modules/devices/application/driver-registry.js";
-import { DeviceManager } from "../src/modules/devices/application/device-manager.js";
-import { MockDriver } from "../src/modules/devices/infrastructure/mock-driver.js";
-import { registerDeviceRoutes } from "../src/modules/devices/http/device-routes.js";
+import { buildApp } from "../src/app.js";
+import { createStubDriver } from "./helpers.js";
 
-function createApp() {
-  const app = Fastify();
+const testDevice = {
+  id: "test-light",
+  name: "Luz de Teste",
+  type: "light" as const,
+  driverId: "mock",
+  capabilities: ["power"],
+  metadata: {
+    virtual: true
+  }
+};
 
-  const registry = new DriverRegistry();
-  registry.register(new MockDriver());
+async function createApp() {
+  const context = await buildApp();
 
-  const manager = new DeviceManager(registry);
-
-  const device = {
-    id: "test-light",
-    name: "Luz de Teste",
-    type: "light" as const,
-    driverId: "mock",
-    capabilities: ["power"],
-    metadata: {
-      virtual: true
-    },
+  context.deviceManager.registerDevice({
+    ...testDevice,
     createdAt: new Date().toISOString()
-  };
+  });
 
-  manager.initialize();
-  manager.registerDevice(device);
-
-  registerDeviceRoutes(app, manager);
-
-  return app;
+  return context;
 }
 
 describe("Device HTTP routes", () => {
   it("lists devices", async () => {
-    const app = createApp();
+    const { app } = await createApp();
 
     const response = await app.inject({
       method: "GET",
@@ -53,7 +44,7 @@ describe("Device HTTP routes", () => {
   });
 
   it("gets device state", async () => {
-    const app = createApp();
+    const { app } = await createApp();
 
     const response = await app.inject({
       method: "GET",
@@ -69,7 +60,7 @@ describe("Device HTTP routes", () => {
   });
 
   it("executes set_power command", async () => {
-    const app = createApp();
+    const { app } = await createApp();
 
     const response = await app.inject({
       method: "POST",
@@ -93,8 +84,8 @@ describe("Device HTTP routes", () => {
     await app.close();
   });
 
-  it("rejects an invalid command", async () => {
-    const app = createApp();
+  it("rejects an invalid command payload", async () => {
+    const { app } = await createApp();
 
     const response = await app.inject({
       method: "POST",
@@ -108,12 +99,13 @@ describe("Device HTTP routes", () => {
     });
 
     expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe("INVALID_COMMAND");
 
     await app.close();
   });
 
   it("returns 404 for an unknown device", async () => {
-    const app = createApp();
+    const { app } = await createApp();
 
     const response = await app.inject({
       method: "GET",
@@ -121,6 +113,138 @@ describe("Device HTTP routes", () => {
     });
 
     expect(response.statusCode).toBe(404);
+    expect(response.json().code).toBe("DEVICE_NOT_FOUND");
+
+    await app.close();
+  });
+
+  it("returns 404 when commanding an unknown device", async () => {
+    const { app } = await createApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices/unknown/commands",
+      payload: {
+        name: "toggle"
+      }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().code).toBe("DEVICE_NOT_FOUND");
+
+    await app.close();
+  });
+
+  it("returns 409 for a duplicate device", async () => {
+    const { app } = await createApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices",
+      payload: testDevice
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().code).toBe("DEVICE_ALREADY_REGISTERED");
+
+    await app.close();
+  });
+
+  it("returns 500 when the driver is not configured", async () => {
+    const { app } = await createApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices",
+      payload: {
+        ...testDevice,
+        id: "orphan-device",
+        driverId: "missing-driver"
+      }
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json().code).toBe("DRIVER_NOT_FOUND");
+
+    await app.close();
+  });
+
+  it("returns 400 when the driver is incompatible", async () => {
+    const { app } = await buildApp({
+      additionalDrivers: [createStubDriver("reject", false)]
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices",
+      payload: {
+        ...testDevice,
+        id: "rejected-device",
+        driverId: "reject"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe("DRIVER_INCOMPATIBLE");
+
+    await app.close();
+  });
+
+  it("returns 400 for an unsupported command", async () => {
+    const { app } = await createApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices/test-light/commands",
+      payload: {
+        name: "blink"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe("UNSUPPORTED_COMMAND");
+
+    await app.close();
+  });
+
+  it("returns 400 when the device lacks the required capability", async () => {
+    const { app, deviceManager } = await buildApp();
+
+    deviceManager.registerDevice({
+      ...testDevice,
+      id: "sensor-1",
+      type: "sensor",
+      capabilities: [],
+      createdAt: new Date().toISOString()
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices/sensor-1/commands",
+      payload: {
+        name: "toggle"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe("INSUFFICIENT_CAPABILITY");
+
+    await app.close();
+  });
+
+  it("returns 400 for invalid input", async () => {
+    const { app } = await createApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/devices",
+      payload: {
+        id: ""
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe("INVALID_INPUT");
 
     await app.close();
   });
